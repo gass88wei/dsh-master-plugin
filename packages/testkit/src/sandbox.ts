@@ -102,9 +102,11 @@ export async function createSandbox(opts: SandboxOptions): Promise<Sandbox> {
 
   let child: ChildProcess | undefined
   let starts = 0
+  // fetch 的报错本体只有「fetch failed」，真正的死因（连接拒绝/重置等）在 err.cause 里，拼出来才能定位
+  const why = (e: unknown) => { const c = (e as any)?.cause; return `${String(e)}${c ? ` / cause: ${String(c)}` : ''}` }
   const url = `http://127.0.0.1:${port}`
-  const get = async (p: string) => { const r = await fetch(url + p); const t = await r.text(); if (!r.ok) throw new Error(`GET ${p} ${r.status} ${t}`); return JSON.parse(t) }
-  const post = async (p: string, body: unknown) => { const r = await fetch(url + p, { method: 'POST', body: JSON.stringify(body) }); const t = await r.text(); if (!r.ok) throw new Error(`POST ${p} ${r.status} ${t}`); return JSON.parse(t) }
+  const get = async (p: string) => { let r: Awaited<ReturnType<typeof fetch>>; try { r = await fetch(url + p) } catch (e) { throw new Error(`GET ${p} ${why(e)}`) } const t = await r.text(); if (!r.ok) throw new Error(`GET ${p} ${r.status} ${t}`); return JSON.parse(t) }
+  const post = async (p: string, body: unknown) => { let r: Awaited<ReturnType<typeof fetch>>; try { r = await fetch(url + p, { method: 'POST', body: JSON.stringify(body) }) } catch (e) { throw new Error(`POST ${p} ${why(e)}`) } const t = await r.text(); if (!r.ok) throw new Error(`POST ${p} ${r.status} ${t}`); return JSON.parse(t) }
   const waitFor = async <T,>(what: string, fn: () => any, timeoutMs = 60_000): Promise<T> => {
     const until = Date.now() + timeoutMs
     let lastErr: unknown
@@ -112,7 +114,7 @@ export async function createSandbox(opts: SandboxOptions): Promise<Sandbox> {
       try { const v = await fn(); if (v !== undefined && v !== false && v !== null) return v as T } catch (e) { lastErr = e }
       await sleep(300)
     }
-    throw new Error(`等待超时：${what}${lastErr ? `（最后错误：${String(lastErr)}）` : ''}`)
+    throw new Error(`等待超时：${what}${lastErr ? `（最后错误：${why(lastErr)}）` : ''}`)
   }
 
   const sb: Sandbox = {

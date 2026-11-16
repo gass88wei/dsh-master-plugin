@@ -23,12 +23,18 @@ export interface Chrome { port: number; page(): Promise<CdpPage>; kill(): Promis
 
 export async function launchChrome(opts: { port: number; profileDir: string }): Promise<Chrome> {
   fs.mkdirSync(opts.profileDir, { recursive: true })
-  const proc: ChildProcess = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  // 缺省保持 macOS 路径；Linux/Windows 机器用 DSHM_CHROME_BIN 指定无头浏览器可执行文件
+  const bin = process.env.DSHM_CHROME_BIN ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+  let spawnErr: unknown
+  const proc: ChildProcess = spawn(bin,
     // G8：关掉组件下载（设备端模型 optimization_guide_model_store 约 41M 等），实测一个用户目录 53M → 2.6M；几个 feature 必须写在同一个 --disable-features 里
     ['--headless=new', '--disable-features=MacAppCodeSignClone,OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints',
       '--disable-component-update', '--disable-background-networking', '--disable-gpu-shader-disk-cache',
       `--remote-debugging-port=${opts.port}`, `--user-data-dir=${opts.profileDir}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore' })
-  for (let i = 0; i < 40; i++) { try { await fetch(`http://127.0.0.1:${opts.port}/json/version`); break } catch { await sleep(250) } }
+  proc.on('error', e => { spawnErr = e })
+  let up = false
+  for (let i = 0; i < 40; i++) { try { await fetch(`http://127.0.0.1:${opts.port}/json/version`); up = true; break } catch { await sleep(250) } }
+  if (!up) throw new Error(`无头 Chrome 未就绪（bin=${bin}${spawnErr ? `，spawn 错误：${String(spawnErr)}` : ''}）。机器没装浏览器或路径不对时，设 DSHM_CHROME_BIN 指向可执行文件`)
   return {
     port: opts.port,
     async page() {
